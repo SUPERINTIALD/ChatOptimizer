@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "LLM Lite Chat Trim Debug",
+  "version": "0.3.0",
+  "description": "ChatGPT fetch interceptor that trims long conversation payloads before React renders them, with console debug summaries.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*"
+  ],
+  "action": {
+    "default_title": "LLM Lite Chat Trim Debug",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["inject.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ]
+    }
+  ]
+}

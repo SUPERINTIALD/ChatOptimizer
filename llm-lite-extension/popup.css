@@ -1,0 +1,86 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-width: 360px;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #111214;
+  color: #f5f7fa;
+}
+
+.wrap {
+  padding: 16px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.sub,
+.foot,
+.status,
+.hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: #b7c0cc;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+input[type="number"],
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #3a4250;
+  background: #1a1d22;
+  color: #f5f7fa;
+}
+
+input[type="number"]:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+button {
+  border: 1px solid #4c6fff;
+  background: #4c6fff;
+  color: white;
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: transparent;
+  border-color: #48515f;
+  color: #d9e0ea;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.status {
+  min-height: 18px;
+  margin-top: 12px;
+}

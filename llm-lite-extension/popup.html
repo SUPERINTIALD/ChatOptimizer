@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LLM Lite</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="wrap">
+    <h1>LLM Lite</h1>
+    <p class="sub">
+      ChatGPT-only fetch trim with mode presets, apply-and-restart, and incremental load-backs.
+    </p>
+
+    <label class="row checkbox-row">
+      <input id="enabled" type="checkbox">
+      <span>Enable ChatGPT fetch trim</span>
+    </label>
+
+    <label class="row">
+      <span>Mode</span>
+      <select id="mode">
+        <option value="safe">Safe</option>
+        <option value="smart">Smart</option>
+        <option value="aggressive">Aggressive</option>
+        <option value="ultra">Ultra</option>
+        <option value="custom">Custom</option>
+      </select>
+    </label>
+
+    <label class="row">
+      <span>Visible turns</span>
+      <input id="keepLastTurns" type="number" min="2" max="200" step="1">
+      <small class="hint">Safe≈24, Smart≈12, Aggressive≈5, Ultra≈2</small>
+    </label>
+
+    <label class="row">
+      <span>Load older batch size</span>
+      <input id="loadOlderBatch" type="number" min="1" max="200" step="1">
+      <small class="hint">How many extra turns to reveal each time you load older messages.</small>
+    </label>
+
+    <label class="row checkbox-row">
+      <input id="showLoadOlderButton" type="checkbox">
+      <span>Show “Load older” button in ChatGPT</span>
+    </label>
+
+    <label class="row checkbox-row">
+      <input id="autoLoadOlderOnScroll" type="checkbox">
+      <span>Auto-load older when scrolling to top</span>
+    </label>
+
+    <label class="row checkbox-row">
+      <input id="debugLogs" type="checkbox">
+      <span>Print debug summary to console</span>
+    </label>
+
+    <label class="row checkbox-row">
+      <input id="autoReloadAfterApply" type="checkbox">
+      <span>Auto-reload active ChatGPT tab after apply</span>
+    </label>
+
+    <div class="actions">
+      <button id="applyRestart">Apply & Restart</button>
+      <button id="save" class="secondary">Save Only</button>
+      <button id="reset" class="secondary">Reset</button>
+    </div>
+
+    <p id="status" class="status" aria-live="polite"></p>
+    <p class="foot">
+      Open DevTools Console and filter for <code>[LLM Lite]</code>.
+    </p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
