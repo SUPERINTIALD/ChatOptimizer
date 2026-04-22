@@ -1,6 +1,5 @@
 (() => {
-  if (location.hostname !== "chatgpt.com") return;
-  if (window.__llmLiteFetchHookInstalled) return;
+  if (!["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com", "grok.com", "x.com"].includes(location.hostname)) return;  if (window.__llmLiteFetchHookInstalled) return;
   window.__llmLiteFetchHookInstalled = true;
 
   const DEFAULTS = {
@@ -22,7 +21,7 @@
 
 
 
-  const CACHE_PREFIX = "llmLite:v2:";
+  const CACHE_PREFIX = "llmLite:v3:";
   const CACHE_TTL_MS = 45_000;
   // const CACHE_TTL_MS = 180_000;
   const MAX_CACHE_BYTES = 4_500_000;

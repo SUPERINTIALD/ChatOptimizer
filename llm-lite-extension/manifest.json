@@ -1,12 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "LLM Lite Chat Trim Debug",
+  "name": "ChatOptimizer",
   "version": "0.3.0",
   "description": "ChatGPT fetch interceptor that trims long conversation payloads before React renders them, with console debug summaries.",
   "permissions": ["storage"],
   "host_permissions": [
-    "https://chatgpt.com/*",
-    "https://chat.openai.com/*"
+  "https://chatgpt.com/*",
+  "https://chat.openai.com/*",
+  "https://claude.ai/*",
+  "https://gemini.google.com/*",
+  "https://grok.com/*",
+  "https://x.com/*"
   ],
   "action": {
     "default_title": "LLM Lite Chat Trim Debug",
@@ -16,7 +20,11 @@
     {
       "matches": [
         "https://chatgpt.com/*",
-        "https://chat.openai.com/*"
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://x.com/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start"

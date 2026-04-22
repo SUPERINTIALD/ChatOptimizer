@@ -1,6 +1,5 @@
 (() => {
-  if (location.hostname !== "chatgpt.com") return;
-  if (window.__llmLiteBridgeLoaded) return;
+  if (!["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com", "grok.com", "x.com"].includes(location.hostname)) return;  if (window.__llmLiteBridgeLoaded) return;
   window.__llmLiteBridgeLoaded = true;
 
   const ext = globalThis.chrome;
@@ -33,8 +32,23 @@
   };
 
   function getThreadKey() {
+    const host = location.hostname;
     const path = location.pathname || "/";
-    return path.startsWith("/c/") ? path : null;
+    const search = location.search || "";
+
+    if (host === "chatgpt.com" || host === "chat.openai.com") {
+      return path.startsWith("/c/") ? `${host}${path}` : null;
+    }
+
+    if (host === "claude.ai") {
+      return path.startsWith("/chat/") ? `${host}${path}${search}` : null;
+    }
+
+    if (host === "gemini.google.com") {
+      return `${host}${path}${search}`;
+    }
+
+    return null;
   }
 
   function getBackfillStorageKey() {
