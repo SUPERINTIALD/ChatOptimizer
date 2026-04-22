@@ -4,7 +4,13 @@
   window.__llmLiteBridgeLoaded = true;
 
   const ext = globalThis.chrome;
-
+  function isExtensionAlive() {
+    try {
+      return !!(ext && ext.runtime && ext.runtime.id);
+    } catch {
+      return false;
+    }
+  }
   const DEFAULTS = {
     enabled: true,
     mode: "smart",
@@ -22,7 +28,8 @@
     injected: false,
     seenScrollDown: false,
     autoLoadLock: false,
-    lastPath: location.pathname
+    lastPath: location.pathname,
+    reloadCooldownUntil: Number(sessionStorage.getItem("llmLiteReloadCooldownUntil") || 0)
   };
 
   function getThreadKey() {
@@ -79,8 +86,12 @@
   }
 
   function loadCombinedConfig(callback) {
+  if (!isExtensionAlive()) return;
+
+  try {
     ext.storage.sync.get(DEFAULTS, syncValues => {
       const backfillKey = getBackfillStorageKey();
+
       if (!backfillKey) {
         callback(buildConfig(syncValues, {}));
         return;
@@ -90,27 +101,58 @@
         callback(buildConfig(syncValues, localValues));
       });
     });
+  } catch (error) {
+    console.warn("[LLM Lite] loadCombinedConfig skipped: extension context invalidated", error);
+  }
   }
 
   function refreshBridge() {
-    loadCombinedConfig(config => {
-      state.config = config;
+    if (!isExtensionAlive()) return;
+    // loadCombinedConfig(config => {
+    //   state.config = config;
+
+    //   if (!state.injected) {
+    //     injectMainWorldScript(config);
+    //     state.injected = true;
+    //   }
+
+    //   setTimeout(() => postConfig(config), 0);
+    //   renderFloatingControls();
+    // });
 
       if (!state.injected) {
-        injectMainWorldScript(config);
+        injectMainWorldScript(state.config);
         state.injected = true;
+        setTimeout(() => postConfig(state.config), 0);
       }
 
-      setTimeout(() => postConfig(config), 0);
-      renderFloatingControls();
-    });
+      loadCombinedConfig(config => {
+        state.config = config;
+        setTimeout(() => postConfig(config), 0);
+        renderFloatingControls();
+      });
   }
 
   function setBackfillTurns(nextValue) {
+    if (state.config.debugLogs) {
+      console.log("[LLM Lite][content] setBackfillTurns", {
+        thread: getThreadKey(),
+        nextValue
+      });
+    }
+    if (!isExtensionAlive()) return;
     const backfillKey = getBackfillStorageKey();
     if (!backfillKey) return;
 
     ext.storage.local.set({ [backfillKey]: Math.max(0, nextValue) }, () => {
+      const cooldownUntil = Date.now() + 2500;
+      sessionStorage.setItem("llmLiteReloadCooldownUntil", String(cooldownUntil));
+      if (state.config.debugLogs) {
+        console.log("[LLM Lite][content] reloading page after backfill change", {
+          thread: getThreadKey(),
+          cooldownUntil
+        });
+      }
       location.reload();
     });
   }
@@ -210,6 +252,9 @@
 
       const root = getScrollRoot();
       if (!root) return;
+      if (document.readyState !== "complete") return;
+      if (Date.now() < state.reloadCooldownUntil) return;
+
 
       if (root.scrollTop > 220) {
         state.seenScrollDown = true;
@@ -246,8 +291,28 @@
   }
 
   ext.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync" && area !== "local") return;
-    refreshBridge();
+    // if (area !== "sync" && area !== "local") return;
+    // // refreshBridge();
+
+    // if (document.visibilityState === "visible") refreshBridge();
+    if (isExtensionAlive()) {
+      ext.storage.onChanged.addListener((changes, area) => {
+      if (!isExtensionAlive()) return;
+      if (area !== "sync" && area !== "local") return;
+
+      if (state.config.debugLogs) {
+        console.log("[LLM Lite][content] storage changed", {
+          area,
+          keys: Object.keys(changes || {}),
+          visible: document.visibilityState
+        });
+      }
+
+      if (document.visibilityState === "visible") {
+        refreshBridge();
+      }
+    });
+  }
   });
 
   refreshBridge();

@@ -17,6 +17,169 @@
 
   let config = { ...DEFAULTS };
 
+
+
+
+
+
+  const CACHE_PREFIX = "llmLite:v2:";
+  const CACHE_TTL_MS = 45_000;
+  // const CACHE_TTL_MS = 180_000;
+  const MAX_CACHE_BYTES = 4_500_000;
+
+  function getConversationIdFromUrl(url) {
+    const match = String(url).match(/\/backend-api\/conversation\/([^/?#]+)/);
+    return match ? match[1] : null;
+  }
+
+  function rawKey(id) {
+    return `${CACHE_PREFIX}raw:${id}`;
+  }
+
+  function trimKey(id, keepTurns) {
+    return `${CACHE_PREFIX}trim:${id}:${keepTurns}`;
+  }
+
+  function metaKey(id) {
+    return `${CACHE_PREFIX}meta:${id}`;
+  }
+
+  function safeSessionGet(key) {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function safeSessionSet(key, value) {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {}
+  }
+
+  function isFreshConversationCache(id) {
+    try {
+      const meta = JSON.parse(safeSessionGet(metaKey(id)) || "null");
+      return !!meta && (Date.now() - meta.ts) < CACHE_TTL_MS;
+    } catch {
+      return false;
+    }
+  }
+
+  // function getCachedRawConversation(id) {
+  //   if (!id || !isFreshConversationCache(id)) return null;
+  //   return safeSessionGet(rawKey(id));
+  // }
+  function isValidConversationPayload(parsed) {
+    if (!parsed || typeof parsed !== "object") return false;
+    if (!parsed.mapping || typeof parsed.mapping !== "object") return false;
+    if (Object.keys(parsed.mapping).length === 0) return false;
+
+    const currentNodeId = getCurrentNodeId(parsed, parsed.mapping);
+    return !!(currentNodeId && parsed.mapping[currentNodeId]);
+  }
+
+  function getCachedRawConversation(id) {
+    if (!id || !isFreshConversationCache(id)) return null;
+    return safeSessionGet(rawKey(id));
+  }
+
+  function getCachedTrimmedConversation(id, keepTurns) {
+    if (!id || !isFreshConversationCache(id)) return null;
+    return safeSessionGet(trimKey(id, keepTurns));
+  }
+
+  function storeRawConversation(id, rawText) {
+    if (!id || !rawText || rawText.length > MAX_CACHE_BYTES) return;
+    safeSessionSet(rawKey(id), rawText);
+    safeSessionSet(metaKey(id), JSON.stringify({ ts: Date.now() }));
+  }
+
+  function storeTrimmedConversation(id, keepTurns, trimmedText) {
+    if (!id || !trimmedText || trimmedText.length > MAX_CACHE_BYTES) return;
+    safeSessionSet(trimKey(id, keepTurns), trimmedText);
+  }
+  function schedulePrewarm(id, rawText) {
+    const run = () => prewarmTrimVariants(id, rawText);
+
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(run, { timeout: 1200 });
+    } else {
+      setTimeout(run, 250);
+    }
+  }
+  function prewarmTrimVariants(id, rawText) {
+    if (!id || !rawText) return;
+
+    let parsed;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      return;
+    }
+
+    const base = getEffectiveKeepTurns();
+    const candidates = [...new Set([
+      base,
+      base + config.loadOlderBatch,
+      base + config.loadOlderBatch * 2
+    ])];
+
+    for (const keep of candidates) {
+      if (!Number.isFinite(keep) || keep < 2) continue;
+      try {
+        const result = trimPayload(parsed, keep);
+        storeTrimmedConversation(id, keep, JSON.stringify(result.payload));
+      } catch {}
+    }
+  }
+
+  function refreshCacheInBackground(input, init, url, conversationId) {
+    originalFetch(input, init).then(async response => {
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) return;
+      const rawText = await response.clone().text();
+
+      if (config.debugLogs) {
+        console.log("[LLM Lite][bg-refresh] fetched", {
+          conversationId,
+          url,
+          contentType,
+          bytes: rawText?.length || 0
+        });
+      }
+
+      if (!rawText) return;
+
+      let parsed;
+      try {
+        parsed = JSON.parse(rawText);
+      } catch {
+        return;
+      }
+
+      if (!isValidConversationPayload(parsed)) {
+        if (config.debugLogs) {
+          console.warn("[LLM Lite] skipped caching invalid background payload", {
+            conversationId,
+            url
+          });
+        }
+        return;
+      }
+
+      storeRawConversation(conversationId, rawText);
+      schedulePrewarm(conversationId, rawText);
+
+      if (config.debugLogs) {
+        console.log("[LLM Lite] background cache refreshed", {
+          conversationId,
+          url
+        });
+      }
+    }).catch(() => {});
+  }
   function normalizeConfig(values) {
     return {
       ...DEFAULTS,
@@ -56,6 +219,17 @@
     return Math.max(2, config.keepLastTurns + config.backfillTurns);
   }
 
+  function debugFetch(stage, extra = {}) {
+  if (!config.debugLogs) return;
+  console.log(`[LLM Lite][fetch] ${stage}`, {
+    mode: config.mode,
+    keepLastTurns: config.keepLastTurns,
+    backfillTurns: config.backfillTurns,
+    effectiveKeepTurns: getEffectiveKeepTurns(),
+    ...extra
+  });
+}
+
   function logSummary(meta) {
     if (!config.debugLogs) return;
 
@@ -82,9 +256,17 @@
   }
 
   function shouldIntercept(input, init) {
-    const url = typeof input === "string" ? input : input?.url || "";
+    const rawUrl = typeof input === "string" ? input : input?.url || "";
     const method = String(init?.method || input?.method || "GET").toUpperCase();
-    return method === "GET" && /\/backend-api\/conversation\//.test(url);
+    if (method !== "GET") return false;
+
+    try {
+      const url = new URL(rawUrl, location.origin);
+
+      return /^\/backend-api\/conversation\/[^/]+$/.test(url.pathname);
+    } catch {
+      return false;
+    }
   }
 
   function countRenderableMessages(mapping) {
@@ -133,9 +315,9 @@
     }
     return Math.max(1, 0);
   }
-
-  function trimPayload(payload) {
-    const effectiveKeepTurns = getEffectiveKeepTurns();
+  function trimPayload(payload, effectiveKeepTurns = getEffectiveKeepTurns()) {
+  // function trimPayload(payload) {
+    // const effectiveKeepTurns = getEffectiveKeepTurns();
 
     if (!payload || typeof payload !== "object") {
       return {
@@ -303,13 +485,117 @@
 
   window.fetch = async function llmLiteFetch(input, init) {
     const url = typeof input === "string" ? input : input?.url || "";
+    const conversationId = getConversationIdFromUrl(url);
+    const effectiveKeepTurns = getEffectiveKeepTurns();
+    debugFetch("enter", {
+      url,
+      conversationId,
+      shouldIntercept: shouldIntercept(input, init),
+      enabled: config.enabled
+    });
+    if (config.enabled && shouldIntercept(input, init) && conversationId) {
+      const cachedTrimmed = getCachedTrimmedConversation(conversationId, effectiveKeepTurns);
+      if (cachedTrimmed) {
+      debugFetch("cachedTrimmed hit", {
+        conversationId,
+        effectiveKeepTurns,
+        bytes: cachedTrimmed.length
+      });
+        try {
+          const parsedCachedTrimmed = JSON.parse(cachedTrimmed);
 
+          if (isValidConversationPayload(parsedCachedTrimmed)) {
+            if (config.debugLogs) {
+              console.log("[LLM Lite] served trimmed conversation from session cache", {
+                conversationId,
+                effectiveKeepTurns
+              });
+            }
+
+            // refreshCacheInBackground(input, init, url, conversationId);
+
+            // setTimeout(() => refreshCacheInBackground(input, init, url, conversationId), 1200);
+            debugFetch("background refresh skipped for debugging", {
+              conversationId,
+              effectiveKeepTurns
+            });
+            return new Response(cachedTrimmed, {
+              status: 200,
+              headers: {
+                "content-type": "application/json"
+              }
+            });
+          }
+
+          sessionStorage.removeItem(trimKey(conversationId, effectiveKeepTurns));
+        } catch (error) {
+          sessionStorage.removeItem(trimKey(conversationId, effectiveKeepTurns));
+          if (config.debugLogs) {
+            console.warn("[LLM Lite] invalid cached trimmed payload removed", error);
+          }
+        }
+      }
+
+      const cachedRaw = getCachedRawConversation(conversationId);
+      debugFetch("cachedRaw lookup", {
+        conversationId,
+        found: !!cachedRaw
+      });
+      if (cachedRaw) {
+        try {
+          const parsed = JSON.parse(cachedRaw);
+          if (!isValidConversationPayload(parsed)) {
+            sessionStorage.removeItem(rawKey(conversationId));
+            sessionStorage.removeItem(metaKey(conversationId));
+            throw new Error("Cached raw payload was not a valid conversation mapping");
+          }
+          const result = trimPayload(parsed, effectiveKeepTurns);
+          if (!result?.payload?.mapping || Object.keys(result.payload.mapping).length < 2) {
+            sessionStorage.removeItem(rawKey(conversationId));
+            sessionStorage.removeItem(metaKey(conversationId));
+            throw new Error("Cached raw payload produced an invalid trimmed mapping");
+          }
+          result.meta.url = url;
+
+          const trimmedText = JSON.stringify(result.payload);
+          storeTrimmedConversation(conversationId, effectiveKeepTurns, trimmedText);
+          schedulePrewarm(conversationId, cachedRaw);
+
+          logSummary({
+            ...result.meta,
+            reason: `${result.meta.reason} (session cache)`
+          });
+
+          // refreshCacheInBackground(input, init, url, conversationId);
+
+          // setTimeout(() => refreshCacheInBackground(input, init, url, conversationId), 1200);
+          debugFetch("background refresh skipped for debugging", {
+            conversationId,
+            effectiveKeepTurns
+          });
+          return new Response(trimmedText, {
+            status: 200,
+            headers: {
+              "content-type": "application/json"
+            }
+          });
+        } catch (error) {
+          if (config.debugLogs) {
+            console.warn("[LLM Lite] cached raw parse failed, falling back to network", error);
+          }
+        }
+      }
+    }
     if (!config.enabled || !shouldIntercept(input, init)) {
       return originalFetch(input, init);
     }
 
     const response = await originalFetch(input, init);
-
+    debugFetch("network response received", {
+      url,
+      conversationId,
+      status: response.status
+    });
     try {
       const contentType = response.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
@@ -318,7 +604,19 @@
 
       const text = await response.clone().text();
       const parsed = JSON.parse(text);
-      const result = trimPayload(parsed);
+      // const result = trimPayload(parsed);
+      const conversationId = getConversationIdFromUrl(url);
+      const effectiveKeepTurns = getEffectiveKeepTurns();
+      const result = trimPayload(parsed, effectiveKeepTurns);
+      debugFetch("trim result", {
+        conversationId,
+        mappingBefore: result.meta.mappingBefore,
+        mappingAfter: result.meta.mappingAfter,
+        renderedBefore: result.meta.renderedMessagesBefore,
+        renderedAfter: result.meta.renderedMessagesAfter,
+        reason: result.meta.reason,
+        trimmed: result.meta.trimmed
+      });
       result.meta.url = url;
       logSummary(result.meta);
 
@@ -327,19 +625,39 @@
       }
 
       const headers = new Headers(response.headers);
-      headers.delete("content-length");
 
-      return new Response(JSON.stringify(result.payload), {
+      const trimmedText = JSON.stringify(result.payload);
+
+      if (conversationId && isValidConversationPayload(parsed) && result.meta.mappingAfter > 0) {
+        storeRawConversation(conversationId, text);
+        storeTrimmedConversation(conversationId, effectiveKeepTurns, trimmedText);
+        schedulePrewarm(conversationId, text);
+      }
+
+      headers.delete("content-length");
+      debugFetch("return trimmed network response", {
+        conversationId,
+        effectiveKeepTurns,
+        bytes: trimmedText.length
+      });
+      return new Response(trimmedText, {
+      // return new Response(JSON.stringify(result.payload), {
         status: response.status,
         statusText: response.statusText,
         headers
       });
     } catch (error) {
-      if (config.debugLogs) {
-        console.warn("[LLM Lite] Intercept failed, passing through original response.", error);
-      }
-      return response;
-    }
+    if (config.debugLogs) {
+    console.warn("[LLM Lite][fetch] Intercept failed, passing through original response.", {
+      url,
+      conversationId,
+      effectiveKeepTurns,
+      error: error?.message,
+      stack: error?.stack
+    });
+  }
+  return response;
+}
   };
 
   if (config.debugLogs) {
